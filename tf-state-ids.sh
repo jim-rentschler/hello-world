@@ -13,16 +13,19 @@
 # Options:
 #   -f FILE     Read addresses from FILE, one per line (blank lines and
 #               lines starting with # are ignored)
-#   -o FORMAT   Output format: "table" (default) or "import"
-#   -s PREFIX   Import mode only: strip PREFIX from each address for the
-#               "to" field, e.g. -s module.database.  when the resources
-#               sit at the root of the new repo
+#   -o FORMAT   Output format: "table" (default), "import" (import blocks
+#               with hardcoded IDs) or "tfvars" (an import_ids map for a
+#               generic imports.tf)
+#   -s PREFIX   Import/tfvars modes: strip PREFIX from each address, e.g.
+#               -s module.database.  when the resources sit at the root
+#               of the new repo
 #   -h          Show this help
 #
 # Examples:
 #   ./tf-state-ids.sh aws_db_instance.main aws_db_subnet_group.main
 #   ./tf-state-ids.sh -f db-resources.txt -o import > imports.tf
 #   ./tf-state-ids.sh -f db-resources.txt -o import -s module.database.
+#   ./tf-state-ids.sh -f db-resources.txt -o tfvars > devtest.imports.tfvars
 #
 # Warnings go to stderr, so redirecting stdout to a file stays clean.
 
@@ -47,8 +50,8 @@ while getopts ":f:o:s:h" opt; do
 done
 shift $((OPTIND - 1))
 
-if [[ "$format" != "table" && "$format" != "import" ]]; then
-  echo "Format must be 'table' or 'import'" >&2
+if [[ "$format" != "table" && "$format" != "import" && "$format" != "tfvars" ]]; then
+  echo "Format must be 'table', 'import' or 'tfvars'" >&2
   exit 1
 fi
 
@@ -99,6 +102,8 @@ parse_state_show() {
 failures=0
 found=0
 
+[[ "$format" == "tfvars" ]] && printf 'import_ids = {\n'
+
 for addr in "${addresses[@]}"; do
   if [[ "$addr" == data.* || "$addr" == *.data.* ]]; then
     echo "SKIP  $addr: data sources are not imported" >&2
@@ -143,11 +148,17 @@ for addr in "${addresses[@]}"; do
   found=$((found + 1))
   if [[ "$format" == "table" ]]; then
     printf '%s\t%s\n' "$addr" "$import_id"
-  else
+  elif [[ "$format" == "import" ]]; then
     to="${addr#"$strip_prefix"}"
     printf 'import {\n  to = %s\n  id = "%s"\n}\n\n' "$to" "$import_id"
+  else
+    to="${addr#"$strip_prefix"}"
+    key="${to//\"/\\\"}"            # escape quotes inside ["key"] indexes
+    printf '  "%s" = "%s"\n' "$key" "$import_id"
   fi
 done
+
+[[ "$format" == "tfvars" ]] && printf '}\n'
 
 echo "Done: $found found, $failures failed." >&2
 [[ $failures -eq 0 ]]
